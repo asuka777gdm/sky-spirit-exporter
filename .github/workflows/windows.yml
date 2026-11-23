@@ -1,0 +1,32 @@
+name: Windows x64 build
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - shell: powershell
+        run: ./build.ps1
+      - shell: powershell
+        run: |
+          cl.exe /nologo /I. tests/auth_test.c /Fe:build/auth-test.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
+          ./build/auth-test.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Auth tests failed' }
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /out:build/CatalogTests.exe /reference:System.Web.Extensions.dll tests/CatalogTests.cs Catalog.cs
+          if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
+          ./build/CatalogTests.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Catalog tests failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SkySpiritExporter-windows-x64-experimental
+          path: |
+            dist/SkySpiritExporter.exe
+            dist/SkySpiritBridge.dll
+            README.md
+            vendor/minhook/LICENSE.txt

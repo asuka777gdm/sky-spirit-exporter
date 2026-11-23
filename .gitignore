@@ -1,0 +1,9 @@
+build/
+dist/
+*.obj
+*.lib
+*.exp
+*.pdb
+*.zip
+*.tmp
+spirit-catalog*.json
