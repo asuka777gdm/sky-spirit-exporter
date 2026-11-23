@@ -18,7 +18,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
           ./build/auth-test.exe
           if ($LASTEXITCODE -ne 0) { throw 'Auth tests failed' }
-          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /out:build/CatalogTests.exe /reference:System.Web.Extensions.dll tests/CatalogTests.cs Catalog.cs
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /out:build\CatalogTests.exe /reference:System.Web.Extensions.dll .\tests\CatalogTests.cs .\Catalog.cs
           if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
           ./build/CatalogTests.exe
           if ($LASTEXITCODE -ne 0) { throw 'Catalog tests failed' }
