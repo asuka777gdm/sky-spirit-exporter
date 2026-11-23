@@ -17,11 +17,19 @@ bool shown=true,guiReady=false;unsigned pendingWidth=0,pendingHeight=0;
 BOOL CALLBACK findWindow(HWND window,LPARAM){DWORD pid=0;GetWindowThreadProcessId(window,&pid);RECT r{};GetClientRect(window,&r);if(pid==GetCurrentProcessId()&&IsWindowVisible(window)&&GetWindow(window,GW_OWNER)==nullptr&&r.right>=640&&r.bottom>=360){gameWindow=window;return FALSE;}return TRUE;}
 void renderTarget(){ID3D11Texture2D* buffer=nullptr;if(SUCCEEDED(swap->GetBuffer(0,IID_PPV_ARGS(&buffer)))){device->CreateRenderTargetView(buffer,nullptr,&target);buffer->Release();}}
 LRESULT CALLBACK windowProc(HWND window,UINT message,WPARAM wParam,LPARAM lParam){
+ if(message==WM_NCCALCSIZE&&wParam)return 0; // Keep the borderless client area with native sizing.
+ if(message==WM_GETMINMAXINFO){auto* limits=reinterpret_cast<MINMAXINFO*>(lParam);limits->ptMinTrackSize={640,420};return 0;}
+ if(message==WM_NCHITTEST){
+  RECT r{};GetWindowRect(window,&r);int x=GET_X_LPARAM(lParam),y=GET_Y_LPARAM(lParam);const int edge=8;
+  bool left=x<r.left+edge,right=x>=r.right-edge,top=y<r.top+edge,bottom=y>=r.bottom-edge;
+  if(top&&left)return HTTOPLEFT;if(top&&right)return HTTOPRIGHT;if(bottom&&left)return HTBOTTOMLEFT;if(bottom&&right)return HTBOTTOMRIGHT;
+  if(left)return HTLEFT;if(right)return HTRIGHT;if(top)return HTTOP;if(bottom)return HTBOTTOM;
+  if(y<r.top+28)return HTCAPTION;return HTCLIENT;
+ }
  if(guiReady&&ImGui_ImplWin32_WndProcHandler(window,message,wParam,lParam))return 1;
  if(message==WM_HOTKEY){shown=!shown;ShowWindow(window,shown?SW_SHOWNOACTIVATE:SW_HIDE);if(!shown&&gameWindow)SetForegroundWindow(gameWindow);return 0;}
  if(message==WM_CLOSE){shown=false;ShowWindow(window,SW_HIDE);if(gameWindow)SetForegroundWindow(gameWindow);return 0;}
  if(message==WM_SIZE&&wParam!=SIZE_MINIMIZED){pendingWidth=LOWORD(lParam);pendingHeight=HIWORD(lParam);return 0;}
- if(message==WM_NCHITTEST){LRESULT hit=DefWindowProcW(window,message,wParam,lParam);POINT p{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};ScreenToClient(window,&p);if(p.y>=0&&p.y<28)return HTCAPTION;return hit;}
  if(message==WM_SYSCOMMAND&&(wParam&0xfff0)==SC_KEYMENU)return 0;
  if(message==WM_DESTROY){PostQuitMessage(0);return 0;}return DefWindowProcW(window,message,wParam,lParam);
 }
@@ -42,7 +50,7 @@ void overlay(HMODULE module){
   WNDCLASSEXW wc{sizeof(wc)};wc.style=CS_CLASSDC;wc.lpfnWndProc=windowProc;wc.hInstance=module;wc.hCursor=LoadCursorW(nullptr,MAKEINTRESOURCEW(32512));wc.lpszClassName=L"SkySpiritNativeOverlay";
   RegisterClassExW(&wc);RECT game{};GetWindowRect(gameWindow,&game);RECT client{};GetClientRect(gameWindow,&client);
   int width=std::min(1040,std::max(640,int(client.right)-50)),height=std::min(700,std::max(420,int(client.bottom)-70));
-  panelWindow=CreateWindowExW(WS_EX_TOOLWINDOW,wc.lpszClassName,L"Дерево духов — Rund",WS_POPUP,game.left+25,game.top+45,width,height,gameWindow,nullptr,module,nullptr);require(panelWindow!=nullptr,"Не удалось создать окно мода");
+  panelWindow=CreateWindowExW(WS_EX_TOOLWINDOW,wc.lpszClassName,L"Дерево духов — Rund",WS_POPUP|WS_THICKFRAME,game.left+25,game.top+45,width,height,gameWindow,nullptr,module,nullptr);require(panelWindow!=nullptr,"Не удалось создать окно мода");
   DXGI_SWAP_CHAIN_DESC desc{};desc.BufferCount=2;desc.BufferDesc.Width=width;desc.BufferDesc.Height=height;desc.BufferDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;desc.OutputWindow=panelWindow;desc.SampleDesc.Count=1;desc.Windowed=TRUE;desc.SwapEffect=DXGI_SWAP_EFFECT_DISCARD;
   D3D_FEATURE_LEVEL level;HRESULT hr=D3D11CreateDeviceAndSwapChain(nullptr,D3D_DRIVER_TYPE_HARDWARE,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&desc,&swap,&device,&level,&context);
   if(FAILED(hr))hr=D3D11CreateDeviceAndSwapChain(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&desc,&swap,&device,&level,&context);

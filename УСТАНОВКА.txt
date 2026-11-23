@@ -35,3 +35,6 @@ LINUX / PROTON
 mods\SkySpiritBridge.dll. Экспортированные JSON сохранятся.
 
 Исходники: https://github.com/asuka777gdm/sky-spirit-exporter
+
+Размер панели меняется перетягиванием любого края или угла.
+Минимальный размер — 640 × 420; верхняя полоса перемещает окно.
