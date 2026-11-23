@@ -22,11 +22,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
           ./build/CatalogTests.exe
           if ($LASTEXITCODE -ne 0) { throw 'Catalog tests failed' }
+          cl.exe /nologo /utf-8 /LD /MT /DLOADER_FORWARD_TEST /D_WIN64 /D_WIN32_WINNT=0x0602 Loader.c /link /OUT:build/test-dxgi.dll user32.lib
+          if ($LASTEXITCODE -ne 0) { throw 'Loader test build failed' }
+          cl.exe /nologo tests/LoaderTests.c /Fe:build/LoaderTests.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Loader test harness build failed' }
+          ./build/LoaderTests.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Loader forwarding test failed' }
+      - shell: powershell
+        run: python package.py
       - uses: actions/upload-artifact@v4
         with:
-          name: SkySpiritExporter-windows-x64-experimental
+          name: SkySpiritExporter-v0.2.0-full-windows-x64
           path: |
             dist/SkySpiritExporter.exe
             dist/SkySpiritBridge.dll
+            dist/dxgi.dll
+            dist/SkySpiritExporter-v0.2.0-full-windows-x64.zip
+            dist/SHA256SUMS-v0.2.0.txt
             README.md
             vendor/minhook/LICENSE.txt

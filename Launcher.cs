@@ -85,52 +85,91 @@ namespace SkySpiritExport {
    }
   }
  }
+ public static class Paths {
+  [DllImport("shell32.dll")] static extern int SHGetKnownFolderPath(ref Guid folder,uint flags,IntPtr token,out IntPtr path);
+  public static string DefaultOutput() {
+   Guid downloads=new Guid("374DE290-123F-4565-9164-39C4925E467B");IntPtr path;
+   int result=SHGetKnownFolderPath(ref downloads,0,IntPtr.Zero,out path);
+   if(result!=0)Marshal.ThrowExceptionForHR(result);
+   try {return Path.Combine(Marshal.PtrToStringUni(path),"sky-spirit","spirit-catalog-export.json");}
+   finally {Marshal.FreeCoTaskMem(path);}
+  }
+ }
  public sealed class Window:Form {
-  readonly Label status=new Label{AutoSize=false,Dock=DockStyle.Fill,Text="Запустите Steam Sky, затем подключитесь до входа в аккаунт."};
-  readonly Button connect=new Button{Text="Подключить и экспортировать",AutoSize=true};
-  readonly Button refresh=new Button{Text="Обновить JSON",AutoSize=true,Enabled=false};
+  [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr window,int id,uint modifiers,uint key);
+  [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr window,int id);
+  readonly Label status=new Label{AutoSize=false,Dock=DockStyle.Fill,Text="Войдите в Sky. После входа станет доступен экспорт дерева духов."};
+  readonly Button connect=new Button{Text="Подключить к Sky",AutoSize=true};
+  readonly Button refresh=new Button{Text="Экспорт дерева духов",AutoSize=true,Enabled=false};
+  readonly Button folder=new Button{Text="Открыть папку JSON",AutoSize=true};
   readonly CheckBox watch=new CheckBox{Text="Обновлять каждые 5 минут",AutoSize=true};
   readonly TextBox output=new TextBox{Dock=DockStyle.Fill};
   readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer{Interval=300000};
-  Process sky;bool busy,closing;readonly int pid;
-  public Window(int target,string destination) {
-   pid=target;Text="Sky Spirit Exporter — тестовая версия";Size=new Size(640,230);MinimumSize=new Size(560,230);StartPosition=FormStartPosition.CenterScreen;
-   output.Text=destination;var layout=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(12),ColumnCount=1,RowCount=4};
-   layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));layout.RowStyles.Add(new RowStyle(SizeType.Percent,100));
-   var buttons=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill};buttons.Controls.Add(connect);buttons.Controls.Add(refresh);
-   layout.Controls.Add(buttons);layout.Controls.Add(output);layout.Controls.Add(watch);layout.Controls.Add(status);Controls.Add(layout);
+  readonly System.Windows.Forms.Timer sessionTimer=new System.Windows.Forms.Timer{Interval=1000};
+  Process sky;bool busy,closing,polling,exitRequested;readonly int pid;readonly bool attached;
+  public Window(int target,string destination,bool autoAttached) {
+   pid=target;attached=autoAttached;Text="Дерево духов — Sky (F8: показать / скрыть)";
+   Size=new Size(660,240);MinimumSize=new Size(600,240);StartPosition=FormStartPosition.CenterScreen;TopMost=attached;
+   output.Text=destination;output.ReadOnly=attached;connect.Visible=!attached;
+   var layout=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(12),ColumnCount=1,RowCount=5};
+   for(int i=0;i<4;i++)layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));layout.RowStyles.Add(new RowStyle(SizeType.Percent,100));
+   var buttons=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill};buttons.Controls.Add(connect);buttons.Controls.Add(refresh);buttons.Controls.Add(folder);
+   layout.Controls.Add(buttons);layout.Controls.Add(new Label{Text="JSON сохраняется в:",AutoSize=true});layout.Controls.Add(output);layout.Controls.Add(watch);layout.Controls.Add(status);Controls.Add(layout);
    connect.Click+=async(s,e)=>await Run(true);refresh.Click+=async(s,e)=>await Run(false);
-   watch.CheckedChanged+=(s,e)=>{timer.Enabled=watch.Checked;};timer.Tick+=async(s,e)=>{if(sky!=null&&!busy)await Run(false);};
-   FormClosing+=(s,e)=>{closing=true;timer.Stop();};
+   folder.Click+=(s,e)=>{try{string dir=Path.GetDirectoryName(Path.GetFullPath(output.Text));Directory.CreateDirectory(dir);Process.Start("explorer.exe",dir);}catch{status.Text="Не удалось открыть папку JSON.";}};
+   watch.CheckedChanged+=(s,e)=>{timer.Enabled=watch.Checked;};timer.Tick+=async(s,e)=>{if(sky!=null&&!busy&&refresh.Enabled)await Run(false);};
+   sessionTimer.Tick+=async(s,e)=>await Poll();
+   Shown+=(s,e)=>{if(attached){try{sky=Bridge.Find(pid);sessionTimer.Start();}catch{status.Text="Sky закрыт или выбран неверный процесс.";}}};
+   FormClosing+=(s,e)=>{if(attached&&!exitRequested){e.Cancel=true;Hide();return;}closing=true;timer.Stop();sessionTimer.Stop();UnregisterHotKey(Handle,1);};
   }
-  void ShowStatus(string message){if(!closing&&!IsDisposed)BeginInvoke((Action)(()=>status.Text=message));}
+  protected override bool ShowWithoutActivation {get{return attached;}}
+  protected override void OnHandleCreated(EventArgs e){base.OnHandleCreated(e);if(attached&&!RegisterHotKey(Handle,1,0x4000,0x77))status.Text="F8 занят другой программой. Панель можно открыть через панель задач.";}
+  protected override void WndProc(ref Message message){if(message.Msg==0x0312&&message.WParam.ToInt32()==1){if(Visible)Hide();else Show();}base.WndProc(ref message);}
+  async Task Poll(){
+   if(polling||closing||busy)return;polling=true;
+   try {
+    if(sky.HasExited){exitRequested=true;Close();return;}
+    Login login=await Task.Run(()=>Bridge.Read(sky));
+    if(!busy){refresh.Enabled=login!=null;if(login==null)status.Text="Войдите в аккаунт Sky. Если вход уже выполнен, откройте магазин духа.";else if(!(refresh.Tag is bool && (bool)refresh.Tag)){status.Text="Вход получен. Нажмите «Экспорт дерева духов».";refresh.Tag=true;}}
+   }catch(IOException e){if(!busy){refresh.Enabled=false;status.Text=e.Message;}}
+   catch{if(!busy){refresh.Enabled=false;status.Text="Ожидание подключения мода к игре…";}}
+   finally{polling=false;}
+  }
+  void ShowStatus(string message){if(!closing&&!IsDisposed)try{BeginInvoke((Action)(()=>status.Text=message));}catch(InvalidOperationException){}}
   async Task Run(bool attach) {
-   if(busy)return;busy=true;connect.Enabled=refresh.Enabled=output.Enabled=false;string destination=output.Text;
+   if(busy)return;busy=true;connect.Enabled=refresh.Enabled=false;string destination=output.Text;
    try { await Task.Run(()=>{
     if(attach){sky=Bridge.Find(pid);Bridge.Inject(sky);}
     Login login=null;ShowStatus("Ожидание запроса игры. Войдите в аккаунт или откройте магазин духа.");
     for(int i=0;i<120&&!closing;i++){try{login=Bridge.Read(sky);}catch(TimeoutException){if(i>5)throw;}catch(IOException){if(i>5)throw;}if(login!=null)break;Thread.Sleep(1000);}
     if(closing)return;if(login==null)throw new IOException("Сессия не получена. Повторите после запроса игры.");
-    var result=Catalog.Fetch(login,()=>closing?null:Bridge.Read(sky),body=>Catalog.Post(login,body),(n,total)=>ShowStatus("Каталог: "+n+" / "+total));
+    var result=Catalog.Fetch(login,()=>closing?null:Bridge.Read(sky),body=>Catalog.Post(login,body),(n,total)=>ShowStatus("Получение дерева: "+n+" / "+total));
     if(closing||!login.Same(Bridge.Read(sky)))throw new IOException("Сессия изменилась до сохранения.");
-    Catalog.Save(destination,result);ShowStatus("Сохранено: "+Path.GetFullPath(destination));
-   }); }catch(Exception e){if(!closing)status.Text=e is IOException||e is InvalidOperationException?e.Message:"Ошибка чтения каталога. Файл оставлен без изменений.";}
-   finally{busy=false;if(!closing){connect.Enabled=output.Enabled=true;refresh.Enabled=sky!=null;}}
+    Catalog.Save(destination,result);ShowStatus("Готово. JSON сохранён: "+Path.GetFullPath(destination));
+   }); }catch(Exception e){if(!closing)status.Text=e is IOException||e is InvalidOperationException?e.Message:"Ошибка чтения дерева. Прежний JSON сохранён.";}
+   finally{busy=false;if(!closing){connect.Enabled=true;refresh.Enabled=sky!=null;}}
   }
  }
  public static class Program {
   [STAThread] public static int Main(string[] args) {
    ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;
-   string output=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),"SkySpiritExport","spirit-catalog-export.json");int pid=0,watch=0;bool once=false;
+   string output=null;int pid=0,watch=0;bool once=false,attached=false;
    try {
     for(int i=0;i<args.Length;i++)switch(args[i]) {
      case "--output":output=Path.GetFullPath(args[++i]);break;
      case "--pid":pid=int.Parse(args[++i]);break;
      case "--once":once=true;break;
+     case "--attached":attached=true;break;
      case "--watch":watch=int.Parse(args[++i]);if(watch<60)throw new ArgumentException("Интервал минимум 60 секунд.");once=true;break;
      default:throw new ArgumentException("Параметры: --once [--watch секунды] [--pid PID] [--output файл.json]");
     }
-    if(!once){Application.EnableVisualStyles();Application.Run(new Window(pid,output));return 0;}
+    if(output==null)output=Paths.DefaultOutput();
+    if(attached&&(pid<=0||once))throw new ArgumentException("Панель мода должна запускаться загрузчиком вместе с Sky.");
+    if(!once){
+     bool created;using(var single=new Mutex(true,"Local\\SkySpiritPanel-"+(attached?pid:0),out created)){
+      if(!created)return 0;Application.EnableVisualStyles();Application.Run(new Window(pid,output,attached));
+     }return 0;
+    }
     var sky=Bridge.Find(pid);Bridge.Inject(sky);
     do {
      Login login=null;for(int i=0;i<120;i++){try{login=Bridge.Read(sky);}catch(TimeoutException){if(i>5)throw;}if(login!=null)break;Thread.Sleep(1000);}

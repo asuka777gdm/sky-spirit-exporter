@@ -2,14 +2,17 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <sddl.h>
+#include <shlobj.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <wchar.h>
 #include "MinHook.h"
 #include "auth.h"
 static SRWLOCK gate=SRWLOCK_INIT;
 static char user[37],session[33];
 static DWORD build,pathOffset;static volatile LONG state; /* 1 waiting, 2 ready, 3 unsupported, 4 hook error */
+static HINSTANCE ownModule;static volatile LONG panelOpening;
 static void *(__fastcall *original)(void*,void*,void*,void*);
 static BOOL readMem(const void *p,void *out,SIZE_T size){SIZE_T n=0;return ReadProcessMemory(GetCurrentProcess(),p,out,size,&n)&&n==size;}
 static BOOL hashFile(const wchar_t *path,char out[65]){
@@ -96,4 +99,33 @@ static DWORD WINAPI serve(void *unused){
  }
  LocalFree(sd);return 0;
 }
-BOOL WINAPI DllMain(HINSTANCE mod,DWORD reason,void *reserved){(void)reserved;if(reason==DLL_PROCESS_ATTACH){DisableThreadLibraryCalls(mod);HANDLE t=CreateThread(NULL,0,serve,NULL,0,NULL);if(t)CloseHandle(t);}return TRUE;}
+static BOOL hashBytes(const BYTE *data,DWORD size,char out[65]){
+ BCRYPT_ALG_HANDLE a=NULL;BCRYPT_HASH_HANDLE h=NULL;BYTE digest[32];BOOL ok=FALSE;
+ if(BCryptOpenAlgorithmProvider(&a,BCRYPT_SHA256_ALGORITHM,NULL,0)<0)return FALSE;
+ if(BCryptCreateHash(a,&h,NULL,0,NULL,0,0)>=0&&BCryptHashData(h,(BYTE*)data,size,0)>=0&&BCryptFinishHash(h,digest,32,0)>=0){for(int i=0;i<32;i++)sprintf(out+i*2,"%02x",digest[i]);out[64]=0;ok=TRUE;}
+ if(h)BCryptDestroyHash(h);BCryptCloseAlgorithmProvider(a,0);return ok;
+}
+static DWORD WINAPI panelThread(void *unused){
+ (void)unused;wchar_t dir[MAX_PATH],exe[MAX_PATH],temp[MAX_PATH],command[MAX_PATH+80];
+ HRSRC resource=FindResourceW(ownModule,MAKEINTRESOURCEW(101),MAKEINTRESOURCEW(10));
+ const BYTE *bytes=resource?LockResource(LoadResource(ownModule,resource)):NULL;DWORD size=resource?SizeofResource(ownModule,resource):0;
+ char expected[65],actual[65];
+ if(!bytes||!size||!hashBytes(bytes,size,expected)||FAILED(SHGetFolderPathW(NULL,CSIDL_LOCAL_APPDATA,NULL,SHGFP_TYPE_CURRENT,dir)))goto error;
+ if(wcslen(dir)>MAX_PATH-90)goto error;
+ wcscat(dir,L"\\SkySpiritExport");CreateDirectoryW(dir,NULL);wcscat(dir,L"\\0.2.0");CreateDirectoryW(dir,NULL);
+ swprintf(exe,MAX_PATH,L"%s\\SkySpiritPanel.exe",dir);
+ if(!hashFile(exe,actual)||strcmp(expected,actual)){
+  swprintf(temp,MAX_PATH,L"%s\\panel-%lu.tmp",dir,GetCurrentProcessId());
+  HANDLE f=CreateFileW(temp,GENERIC_WRITE,0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);DWORD written=0;
+  if(f==INVALID_HANDLE_VALUE)goto error;
+  BOOL ok=WriteFile(f,bytes,size,&written,NULL)&&written==size&&FlushFileBuffers(f);CloseHandle(f);
+  if(!ok||!MoveFileExW(temp,exe,MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)){DeleteFileW(temp);goto error;}
+ }
+ swprintf(command,MAX_PATH+80,L"\"%s\" --attached --pid %lu",exe,GetCurrentProcessId());
+ STARTUPINFOW startup={sizeof(startup)};PROCESS_INFORMATION process={0};
+ if(!CreateProcessW(exe,command,NULL,NULL,FALSE,CREATE_NO_WINDOW,NULL,dir,&startup,&process))goto error;
+ CloseHandle(process.hThread);WaitForSingleObject(process.hProcess,INFINITE);CloseHandle(process.hProcess);InterlockedExchange(&panelOpening,0);return 0;
+ error:MessageBoxW(NULL,L"Не удалось открыть панель дерева духов. Проверьте права записи в локальные данные пользователя и наличие .NET Framework 4.8.",L"Дерево духов",MB_OK|MB_ICONERROR);InterlockedExchange(&panelOpening,0);return 0;
+}
+__declspec(dllexport) void WINAPI SkySpiritOpenPanel(void){if(InterlockedCompareExchange(&panelOpening,1,0)==0){HANDLE t=CreateThread(NULL,0,panelThread,NULL,0,NULL);if(t)CloseHandle(t);else InterlockedExchange(&panelOpening,0);}}
+BOOL WINAPI DllMain(HINSTANCE mod,DWORD reason,void *reserved){(void)reserved;if(reason==DLL_PROCESS_ATTACH){ownModule=mod;DisableThreadLibraryCalls(mod);HANDLE t=CreateThread(NULL,0,serve,NULL,0,NULL);if(t)CloseHandle(t);}return TRUE;}
