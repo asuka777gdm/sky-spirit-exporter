@@ -1,4 +1,4 @@
-name: Windows x64 build
+name: Native Windows x64 build
 on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
@@ -14,30 +14,21 @@ jobs:
         run: ./build.ps1
       - shell: powershell
         run: |
-          cl.exe /nologo /I. tests/auth_test.c /Fe:build/auth-test.exe
-          if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
-          ./build/auth-test.exe
-          if ($LASTEXITCODE -ne 0) { throw 'Auth tests failed' }
-          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /out:build\CatalogTests.exe /reference:System.Web.Extensions.dll .\tests\CatalogTests.cs .\Catalog.cs
-          if ($LASTEXITCODE -ne 0) { throw 'Test build failed' }
-          ./build/CatalogTests.exe
+          cl.exe /nologo /utf-8 /EHsc /std:c++17 /Ivendor/nlohmann /Inative tests/native_catalog.cpp /Fe:build/native-catalog-tests.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Catalog test build failed' }
+          ./build/native-catalog-tests.exe
           if ($LASTEXITCODE -ne 0) { throw 'Catalog tests failed' }
-          cl.exe /nologo /utf-8 /LD /MT /DLOADER_FORWARD_TEST /D_WIN64 /D_WIN32_WINNT=0x0602 Loader.c /link /OUT:build/test-dxgi.dll user32.lib
+          cl.exe /nologo /utf-8 /LD /MT /DLOADER_FORWARD_TEST /D_WIN64 /D_WIN32_WINNT=0x0602 native/loader.c /link /OUT:build/test-powrprof.dll user32.lib
           if ($LASTEXITCODE -ne 0) { throw 'Loader test build failed' }
-          cl.exe /nologo tests/LoaderTests.c /Fe:build/LoaderTests.exe
+          cl.exe /nologo tests/PowerLoaderTests.c /Fe:build/PowerLoaderTests.exe
           if ($LASTEXITCODE -ne 0) { throw 'Loader test harness build failed' }
-          ./build/LoaderTests.exe
-          if ($LASTEXITCODE -ne 0) { throw 'Loader forwarding test failed' }
+          ./build/PowerLoaderTests.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Loader tests failed' }
       - shell: powershell
         run: python package.py
       - uses: actions/upload-artifact@v4
         with:
-          name: SkySpiritExporter-v0.2.0-full-windows-x64
+          name: SkySpiritExporter-v0.3.0-native-windows-x64
           path: |
-            dist/SkySpiritExporter.exe
-            dist/SkySpiritBridge.dll
-            dist/dxgi.dll
-            dist/SkySpiritExporter-v0.2.0-full-windows-x64.zip
-            dist/SHA256SUMS-v0.2.0.txt
-            README.md
-            vendor/minhook/LICENSE.txt
+            dist/native/SkySpiritExporter-v0.3.0-native-windows-x64.zip
+            dist/native/SHA256SUMS-v0.3.0.txt
